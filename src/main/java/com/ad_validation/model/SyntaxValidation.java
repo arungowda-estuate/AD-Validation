@@ -1,6 +1,7 @@
 package com.ad_validation.model;
 
 import java.util.List;
+import java.util.Map;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import org.springframework.context.annotation.ComponentScan;
@@ -10,7 +11,7 @@ import org.springframework.context.annotation.ComponentScan;
 @ComponentScan
 public class SyntaxValidation {
   private String status;
-  private List<String> messages;
+  private Map<String, List<String>> messages;
 
   @Override
   public String toString() {
