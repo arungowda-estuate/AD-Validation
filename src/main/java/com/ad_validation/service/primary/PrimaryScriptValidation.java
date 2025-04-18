@@ -64,22 +64,25 @@ public class PrimaryScriptValidation {
 
     String normalizedScript = script.replaceAll("\\s+", " ").trim();
     int lastMatchEnd = -1;
+    List<String> matchedSegments = new ArrayList<>();
 
     for (String keyword : KEYWORD_ORDER) {
       Pattern pattern = KEYWORD_PATTERNS.get(keyword);
       if (pattern == null) continue;
 
       Matcher matcher = pattern.matcher(normalizedScript);
+      boolean foundAny = false;
 
-      if (matcher.find()) {
+      while (matcher.find()) {
+        foundAny = true;
         int matchStart = matcher.start();
 
-        // Order check
+        // Order check using the first match
         if (matchStart < lastMatchEnd) {
           messages.add("Keyword '" + keyword + "' is out of order.");
         }
 
-        // Boolean validation
+        // Boolean keyword value check
         if (Arrays.asList("ADDTBLS", "MODCRIT", "ADCHGS", "USENEW", "USEFM").contains(keyword)) {
           String[] parts = matcher.group().split("\\s+");
           if (parts.length < 2 || !(parts[1].equals("Y") || parts[1].equals("N"))) {
@@ -88,11 +91,26 @@ public class PrimaryScriptValidation {
           }
         }
 
-        lastMatchEnd = matcher.end();
+        matchedSegments.add(matcher.group());
+        lastMatchEnd = Math.max(lastMatchEnd, matcher.end());
+      }
 
-      } else if (!Arrays.asList("DESC", "GRPCOL", "VAR").contains(keyword)) {
+      // Mark required keywords that are missing (excluding optional ones)
+      if (!foundAny && !Arrays.asList("DESC", "GRPCOL", "VAR", "SOLUTION").contains(keyword)) {
         messages.add("Missing or invalid value for required keyword: " + keyword);
       }
+    }
+
+    // Remove all matched keyword parts from the normalized script
+    String unmatchedScript = normalizedScript;
+    for (String part : matchedSegments) {
+      unmatchedScript = unmatchedScript.replace(part, "");
+    }
+
+    unmatchedScript = unmatchedScript.replaceAll("\\s+", " ").trim();
+
+    if (!unmatchedScript.isEmpty() && !unmatchedScript.equals(";")) {
+      messages.add("Invalid characters found : '" + unmatchedScript + "'");
     }
 
     return messages;
