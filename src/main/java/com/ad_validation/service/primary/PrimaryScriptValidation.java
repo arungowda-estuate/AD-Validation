@@ -59,10 +59,10 @@ public class PrimaryScriptValidation {
             Pattern.CASE_INSENSITIVE));
   }
 
-  public List<String> validatePrimaryScript(String script) {
+  public List<String> validatePrimaryScript(String primaryScript) {
     List<String> messages = new ArrayList<>();
 
-    String normalizedScript = script.replaceAll("\\s+", " ").trim();
+    String normalizedScript = primaryScript.replaceAll("\\s+", " ").trim();
     int lastMatchEnd = -1;
     List<String> matchedSegments = new ArrayList<>();
 
@@ -101,7 +101,7 @@ public class PrimaryScriptValidation {
       }
     }
 
-    // Remove all matched keyword parts from the normalized script
+    // Remove all matched keyword parts from the normalized primaryScript
     String unmatchedScript = normalizedScript;
     for (String part : matchedSegments) {
       unmatchedScript = unmatchedScript.replace(part, "");
