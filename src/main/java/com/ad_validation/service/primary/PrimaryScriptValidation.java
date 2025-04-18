@@ -80,6 +80,7 @@ public class PrimaryScriptValidation {
         // Order check using the first match
         if (matchStart < lastMatchEnd) {
           messages.add("Keyword '" + keyword + "' is out of order.");
+          return messages;
         }
 
         // Boolean keyword value check
@@ -88,6 +89,7 @@ public class PrimaryScriptValidation {
           if (parts.length < 2 || !(parts[1].equals("Y") || parts[1].equals("N"))) {
             messages.add(
                 "Invalid boolean value for keyword: " + keyword + " (expected 'Y' or 'N').");
+            return messages;
           }
         }
 
@@ -98,6 +100,7 @@ public class PrimaryScriptValidation {
       // Mark required keywords that are missing (excluding optional ones)
       if (!foundAny && !Arrays.asList("DESC", "GRPCOL", "VAR", "SOLUTION").contains(keyword)) {
         messages.add("Missing or invalid value for required keyword: " + keyword);
+        return messages;
       }
     }
 
@@ -110,7 +113,8 @@ public class PrimaryScriptValidation {
     unmatchedScript = unmatchedScript.replaceAll("\\s+", " ").trim();
 
     if (!unmatchedScript.isEmpty() && !unmatchedScript.equals(";")) {
-      messages.add("Invalid characters found : '" + unmatchedScript + "'");
+      messages.add("Invalid characters found : '" + unmatchedScript + "' primary block.");
+      return messages;
     }
 
     return messages;
