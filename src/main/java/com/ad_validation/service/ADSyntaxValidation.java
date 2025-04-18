@@ -1,5 +1,6 @@
 package com.ad_validation.service;
 
+import com.ad_validation.service.archacts.ArchactsBlockScriptValidation;
 import com.ad_validation.service.primary.PrimaryScriptValidation;
 import com.ad_validation.service.relationship.RelScriptValidation;
 import com.ad_validation.service.table.TableScriptValidation;
@@ -16,8 +17,9 @@ public class ADSyntaxValidation {
   @Autowired private PrimaryScriptValidation primaryScriptValidation;
   @Autowired private TableScriptValidation tableScriptValidation;
   @Autowired private RelScriptValidation relScriptValidation;
+  @Autowired private ArchactsBlockScriptValidation archactsBlockScriptValidation;
 
-  private static final ExecutorService executor = Executors.newFixedThreadPool(3);
+  private static final ExecutorService executor = Executors.newFixedThreadPool(20);
 
   private List<String> validateScript(String script) {
     List<String> messages = new ArrayList<>();
@@ -26,11 +28,11 @@ public class ADSyntaxValidation {
     List<String> semicolonCheck = checkScriptEndsWithSemicolon(script);
     if (!semicolonCheck.isEmpty()) return semicolonCheck;
 
-    // 3. Normalize whitespace
+    // 2. Normalize whitespace
     String normalizedScript = script.replaceAll("\\s+", " ").trim();
     String upperScript = normalizedScript.toUpperCase();
 
-    // 4. Extract Primary block from CREATE AD to first TABLE
+    // 3. Extract PRIMARY block
     int createAdIndex = upperScript.indexOf("CREATE AD");
     int tableIndex = upperScript.indexOf("TABLE");
 
@@ -42,57 +44,103 @@ public class ADSyntaxValidation {
       primaryEnd = tableIndex;
     } else {
       primaryBlock = "";
-      messages.add("Invalid script: Missing TABLE block script must contain least one TABLE block");
+      messages.add(
+          "❌ Invalid script: Missing TABLE block — script must contain at least one TABLE block.");
       return messages;
     }
 
-    // 5. Extract REL block
-    String relPattern = "(?i)(REL\\s*\\(.*)";
-    Matcher matcherRel = Pattern.compile(relPattern).matcher(normalizedScript);
-    String relBlock;
+    // 4. Extract REL blocks (optional)
+    List<String> relBlocks = new ArrayList<>();
     int relStartIndex = -1;
-    if (matcherRel.find()) {
-      relBlock = matcherRel.group(1).trim();
-      relStartIndex = matcherRel.start();
-    } else {
-      relBlock = "";
+    Pattern relPattern =
+        Pattern.compile("REL\\s*\\(.*?\\)", Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+    Matcher relMatcher = relPattern.matcher(normalizedScript);
+    while (relMatcher.find()) {
+      String rel = relMatcher.group().trim();
+      relBlocks.add(rel);
+      if (relStartIndex == -1) {
+        relStartIndex = relMatcher.start();
+      }
     }
+    String relBlockScript = String.join(" ", relBlocks);
 
-    // 6. Extract TABLE block (from primaryEnd to REL or end)
-    int tableEnd = (relStartIndex != -1) ? relStartIndex : normalizedScript.length();
+    // 5. Extract ARCHACTS blocks (optional)
+    List<String> archactsBlocks = new ArrayList<>();
+    int archactsStartIndex = -1;
+    Pattern archPattern =
+        Pattern.compile(
+            "ARCHACTS\\s*\\(.*?SQL\\s*//.*?//.*?\\)", Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+    Matcher archMatcher = archPattern.matcher(normalizedScript);
+    while (archMatcher.find()) {
+      String arch = archMatcher.group().trim();
+      archactsBlocks.add(arch);
+      if (archactsStartIndex == -1) {
+        archactsStartIndex = archMatcher.start();
+      }
+    }
+    String archactsBlockScript = String.join(" ", archactsBlocks);
+
+    // 6. Extract TABLE block(s): from PRIMARY end up to REL, or ARCHACTS, or semicolon
+    int tableEnd;
+    if (relStartIndex != -1) {
+      tableEnd = relStartIndex;
+    } else if (archactsStartIndex != -1) {
+      tableEnd = archactsStartIndex;
+    } else {
+      int semicolonIndex = normalizedScript.indexOf(";", primaryEnd);
+      tableEnd = (semicolonIndex != -1) ? semicolonIndex + 1 : normalizedScript.length();
+    }
     String tableBlock = normalizedScript.substring(primaryEnd, tableEnd).trim();
 
-    // 6. Validation logic
+    // 7. Extract and combine each TABLE(...) block
+    List<String> tableBlocks = new ArrayList<>();
+    Pattern tablePattern =
+        Pattern.compile(
+            "TABLE\\s*\\(.*?EXTRROWID\\s+[YN]\\s*\\)", Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+    Matcher tableMatcher = tablePattern.matcher(tableBlock);
+    while (tableMatcher.find()) {
+      tableBlocks.add(tableMatcher.group().trim());
+    }
+    String combinedTableBlock = String.join(" ", tableBlocks);
+
+    // 7. Structural validation
     if (primaryBlock.isEmpty()) {
-      messages.add("Invalid script: Missing primary block (CREATE AD ... SOLUTION)");
+      messages.add("Invalid script: Missing PRIMARY block (CREATE AD ... )");
       return messages;
     }
 
-    if (tableBlock.isEmpty() && !relBlock.isEmpty()) {
-      messages.add("Invalid script: REL block is present but TABLE block is missing.");
+    if (tableBlock.isEmpty() && (!relBlocks.isEmpty() || !archactsBlocks.isEmpty())) {
+      messages.add("Invalid script: TABLE block is missing.");
       return messages;
     }
 
-    // 7. Submit validation tasks to executor
+    // 8. Submit validation tasks
     List<Future<List<String>>> futures = new ArrayList<>();
 
     futures.add(executor.submit(() -> primaryScriptValidation.validatePrimaryScript(primaryBlock)));
 
     if (!tableBlock.isEmpty()) {
-      futures.add(executor.submit(() -> tableScriptValidation.validate(tableBlock)));
+      futures.add(
+          executor.submit(() -> tableScriptValidation.validateTableFullScript(combinedTableBlock)));
     }
 
-    if (!relBlock.isEmpty()) {
-      futures.add(executor.submit(() -> relScriptValidation.validateRelScript(relBlock)));
+    if (!archactsBlocks.isEmpty()) {
+      futures.add(
+          executor.submit(
+              () -> archactsBlockScriptValidation.validateArchactsBlock(archactsBlockScript)));
     }
 
-    // 8. Collect results from futures
+    if (!relBlocks.isEmpty()) {
+      futures.add(executor.submit(() -> relScriptValidation.validateRelScript(relBlockScript)));
+    }
+
+    // 9. Collect results
     for (Future<List<String>> future : futures) {
       try {
-        List<String> result = future.get(); // blocking until task is done
-        messages.addAll(result);
+        messages.addAll(future.get());
       } catch (InterruptedException | ExecutionException e) {
         messages.add("Error during script validation: " + e.getMessage());
+        return messages;
       }
     }
 
@@ -104,13 +152,16 @@ public class ADSyntaxValidation {
     String trimmed = script.trim();
     if (trimmed.isEmpty()) {
       messages.add("Script is empty — cannot validate semicolon.");
+      return messages;
     } else if (!trimmed.endsWith(";")) {
       messages.add("Script must end with a semicolon ';'.");
+      return messages;
     }
     return messages;
   }
 
   public Map<String, List<String>> extractAdScriptsByName(String fullScript) {
+
     Map<String, List<String>> resultMap = new LinkedHashMap<>();
     Map<String, String> adScripts = new LinkedHashMap<>();
 
@@ -144,6 +195,7 @@ public class ADSyntaxValidation {
   }
 
   private Map<String, List<String>> validateAllScripts(Map<String, String> scriptMap) {
+
     Map<String, List<String>> resultMap = new ConcurrentHashMap<>();
     List<Future<?>> futures = new ArrayList<>();
 
@@ -166,9 +218,7 @@ public class ADSyntaxValidation {
       } catch (InterruptedException | ExecutionException e) {
         // In case there's an error with a specific script, you might want to add it as an error map
         // entry
-        resultMap.put(
-            "ValidationError",
-            Collections.singletonList("Error during validation: " + e.getMessage()));
+        resultMap.put("Validation error ", Collections.singletonList("Invalid Script."));
       }
     }
     return resultMap;
